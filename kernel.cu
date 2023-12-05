@@ -3,7 +3,9 @@
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
-#include <bitset>
+#include <string>
+#include <cstdint>
+#include <chrono>
 
 
 #define L 1000
@@ -12,9 +14,8 @@
 #define seed(n) (n * n + 7)
 
 
-#include <cstdint>
 
-// returs n-th bit of a
+// returns n-th bit of a
 #define GET_BIT(a, n)   (uint32_t)(((a) & ((uint32_t)1 << (n))) >> (n))
 // returns a copy of a with n-th bit set to 1
 #define SET_BIT(a, n)   (uint32_t)((a) | (1 << (n)))
@@ -23,7 +24,7 @@
 // returns a copy of a with n-th bit flipped
 #define FLIP_BIT(a, n)  (uint32_t)((a) ^ (1 << (n)))
 
-// return bit_no bit from bigger bit vector
+// returns bit_no bit from bigger bit vector
 #define get_bit(vector, bit_no)   (GET_BIT((vector)[(bit_no) / 32], (bit_no) % 32))
 // sets bit_no bit in bigger bit vector to 1 (modifies it)
 #define set_bit(vector, bit_no)   ((vector)[(bit_no) / 32] = SET_BIT((vector)[(bit_no) / 32], (bit_no) % 32))
@@ -32,14 +33,9 @@
 // flips bit_no bit in bigger bit vector (modifies it)
 #define flip_bit(vector, bit_no)  ((vector)[(bit_no) / 32] = FLIP_BIT((vector)[(bit_no) / 32], (bit_no) % 32))
 
-// return pointer to n-th vector in data
+// returns pointer to n-th vector in data
 #define vector(data, n)         (&(data)[(n) * L_32])
 
-
-bool hash(int a, int b)
-{
-    return ((a * seed(a) + b) % (a > b ? a - b : b - a)) % 2;
-}
 
 void printVectorAsString(uint32_t* v)
 {
@@ -54,7 +50,7 @@ void printVectorAsString(uint32_t* v)
     printf("%s\n", s.c_str());
 }
 
-// the contains either two pointers to child nodes
+// this contains either two pointers to child nodes
 // or two pointers to bit_vectors (leaf nodes)
 // in either case, one of these pointers may be nullptr
 struct node {
@@ -66,8 +62,12 @@ struct node {
 
 
 // custom allocation in cuda memory
-
-
+// as I need to preserve the whole tree structure
+// and not just the underlying array
+// I need have it in GPU-accessible memory
+// and so I malloc a large block of memory
+// big enough to fit the tree in the worst-case scenario
+// and the vectors themselves
 uint64_t mem_size = L * N;
 uint64_t mem_current = 0;
 struct node* memory;
@@ -76,6 +76,8 @@ struct node* alloc_node_in_memory()
 {
     if (mem_current == mem_size)
     {
+        // there could be a more graceful exit here
+        // but from mathematical perspective, this will NEVER execute
         abort();
     }
     struct node* tmp = memory + mem_current;
@@ -116,114 +118,11 @@ struct tree_custom_alloc {
         // we add the vector in the appropriate place
         current->bit_vector[get_bit(bit_vector, L - 1)] = bit_vector;
     }
-    bool exists(uint32_t* bit_vector)
-    {
-        // go down the tree, choosing direction based on current bit
-        struct node* current = root;
-        for (int i = 0; i < L - 1; i++)
-        {
-            if (current->children[get_bit(bit_vector, i)] != nullptr)
-            {
-                current = current->children[get_bit(bit_vector, i)];
-            }
-            else
-            {
-                // abort if there is no child at the specified location
-                return false;
-            }
-        }
-        // if we were able to go to the bottom
-        // we are just above the leaves (vectors)
-        // so we check if the requested vector exists
-        if (current->bit_vector[get_bit(bit_vector, L - 1)] != nullptr)
-        {
-            return true;
-        }
-        return false;
-    }
-    void delete_tree(struct node* n, int depth)
-    {
-        // no need to delete anything in this case
-        return;
-    }
 };
 
-struct tree {
-    struct node* root = new struct node();
-    void insert(uint32_t* bit_vector)
-    {
-        // go down the tree, choosing direction based on current bit
-        struct node* current = root;
-        for (int i = 0; i < L - 1; i++)
-        {
-            if (current->children[get_bit(bit_vector, i)] == nullptr)
-            {
-                // if there is no child, create it
-                current->children[get_bit(bit_vector, i)] = new struct node;
-            }
-			// and descend to it
-			current = current->children[get_bit(bit_vector, i)];
-        }
-        if (current->bit_vector[get_bit(bit_vector, L - 1)] != nullptr)
-        {
-            // it the vector is there, we found a duplicate
-            // so we don't care about it
-            return;
-        }
-        // we add the vector in the appropriate place
-        current->bit_vector[get_bit(bit_vector, L - 1)] = bit_vector;
-    }
-    bool exists(uint32_t* bit_vector)
-    {
-        // go down the tree, choosing direction based on current bit
-        struct node* current = root;
-        for (int i = 0; i < L - 1; i++)
-        {
-            if (current->children[get_bit(bit_vector, i)] != nullptr)
-            {
-                current = current->children[get_bit(bit_vector, i)];
-            }
-            else
-            {
-                // abort if there is no child at the specified location
-                return false;
-            }
-        }
-        // if we were able to go to the bottom
-        // we are just above the leaves (vectors)
-        // so we check if the requested vector exists
-        if (current->bit_vector[get_bit(bit_vector, L - 1)] != nullptr)
-        {
-            return true;
-        }
-        return false;
-    }
-    void delete_tree(struct node* n, int depth)
-    {
-        if (depth == L - 1)
-        {
-            delete n;
-            return;
-        }
-        if (n->children[0] != nullptr)
-        {
-			this->delete_tree(n->children[0], depth + 1);
-        }
-        if (n->children[1] != nullptr)
-        {
-            this->delete_tree(n->children[1], depth + 1);
-        }
-        delete n;
-    }
-};
 
-struct arrays
-{
-    uint32_t* data;
-    uint32_t* results;
-    struct node* memory;
-};
-
+// just to check if the tree works properly
+// prints just the leaves from left to right
 void printTheTree(struct node* n, int depth)
 {
     if (depth == L - 1)
@@ -265,7 +164,7 @@ void generateDataKernel(uint32_t* data)
         {
             // set desired bit to 0 or 1
             // depending on the output of some function
-            // data[i].set(j, hash(index, j));
+            // I created that empirically, seems to generate random enough output
 			if (((index * seed(index) + j) % (index > j ? index - j : j - index) + 3) % 2)
 			{
                 set_bit(vector(data, i), j);
@@ -295,20 +194,84 @@ void solve(uint32_t* data, uint32_t* results, struct node* memory)
         // and if it is, mark in the results vector
         for (int j = 0; j < L; j++)
         {
-            // !!! important: !!!
-            // somehow copy vec value to tmp
-            // probably best to do that not here
-            // but when the data is created
-            // so to the generation I shoud add just one line
-            // so the modifications affect both vectors in tmp and data
+            // in order to prevent duplicates from being printed
+            // and to reduce the computation time +- by half
+            // we can check just the vectors which have a 0 changed to 1
+            // and still we will not miss a solution
+            // so if currently inspected bit is a 1, we go to the next
+            if (get_bit(vec, j))
+                continue;
 
             // we flip j-th bit
             flip_bit(vec, j);
 
+            // get a pointer to the tree root
 			struct node* current = memory;
+            // flag to indicate if we were able to go to the bottom
             bool searchFailed = false;
 			for (int i = 0; i < L - 1; i++)
 			{
+                // traverse the tree
+				if (current->children[get_bit(vec, i)] != nullptr)
+				{
+					current = current->children[get_bit(vec, i)];
+				}
+				else
+				{
+					// abort if there is no child at the specified location
+                    searchFailed = true;
+				}
+			}
+            if (!searchFailed)
+            {
+				// if we were able to go to the bottom
+				// we are just above the leaves (vectors)
+				// so we check if the requested vector exists
+				if (current->bit_vector[get_bit(vec, L - 1)] != nullptr)
+				{
+					// if it does, we flip the respective bit in results
+                    flip_bit(res, j);
+				}
+            }
+			// then we bring our vector back to its initial state
+            flip_bit(vec, j);
+        }
+    }
+}
+
+
+void solve_on_cpu(uint32_t* data, uint32_t* results, struct node* memory)
+{
+    for (int i = 0; i < N; i ++)
+    {
+        // here we look for solutions for i-th vector
+
+        uint32_t* res = vector(results, i);
+        uint32_t* vec = vector(data, i);
+        // iterate through its bits
+        // to generate all possible vectors with Hamming distance 1
+        // and for each check if it is in the initial input
+        // and if it is, mark in the results vector
+        for (int j = 0; j < L; j++)
+        {
+            // in order to prevent duplicates from being printed
+            // and to reduce the computation time +- by half
+            // we can check just the vectors which have a 0 changed to 1
+            // and still we will not miss a solution
+            // so if currently inspected bit is a 1, we go to the next
+            if (get_bit(vec, j))
+                continue;
+
+            // we flip j-th bit
+            flip_bit(vec, j);
+
+            // get a pointer to the tree root
+			struct node* current = memory;
+            // flag to indicate if we were able to go to the bottom
+            bool searchFailed = false;
+			for (int i = 0; i < L - 1; i++)
+			{
+                // traverse the tree
 				if (current->children[get_bit(vec, i)] != nullptr)
 				{
 					current = current->children[get_bit(vec, i)];
@@ -368,54 +331,68 @@ int main()
     cudaError_t cudaStatus;
     uint32_t* data;
     cudaStatus = allocAndGenerateData(&data);
-    //struct tree *t = new struct tree();
-
-    // allocate memory for the results - the same as input data
-    // but all bytes initialized to zero
-    // if for n-th vector we detect that a vector with i-th bit flipped
-    // is in the initial data, we indicate that by setting i-th bit
-    // of n-th vector in this array to 1
+    if (cudaStatus != cudaSuccess)
+    {
+        return;
+    }
 
     uint32_t* results;
     cudaStatus = cudaMallocManaged((void**)&results, N * L_32 * sizeof(uint32_t));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMallocManaged failed!");
-        goto Error;
+        goto resultsError;
     }
     cudaStatus = cudaMemset((void*)results, 0, N * L_32 * sizeof(uint32_t));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemsetfailed!");
-        goto Error;
+        goto resultsError;
     }
 
     // allocate memory for the tree
     cudaStatus = cudaMallocManaged((void**)&memory, mem_size * sizeof(struct node));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMallocManaged failed!");
-        goto Error;
+        goto memoryError;
     }
 
     struct tree_custom_alloc* t = new struct tree_custom_alloc();
 
+    // unfortunately the tree cannot be created in a parallel manner
+    // so I construct it on cpu
     for (int i = 0; i < N; i++)
     {
         //printVectorAsString(vector(data, i));
         t->insert(vector(data, i));
     }
 
-    printTheTree(t->root, 0);
+    //printTheTree(t->root, 0);
 
     int blockSize = 256;
     int numBlocks = (N + blockSize - 1) / blockSize;
+    auto gpu_start = std::chrono::high_resolution_clock::now();
     solve<<<numBlocks, blockSize>>>(data, results, memory);
 
     cudaStatus = cudaDeviceSynchronize();
+    auto gpu_end = std::chrono::high_resolution_clock::now();
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaDeviceSynchronize failed!");
         goto Error;
     }
 
+    auto cpu_start = std::chrono::high_resolution_clock::now();
+    solve_on_cpu(data, results, memory);
+    auto cpu_end = std::chrono::high_resolution_clock::now();
+
+    auto cpu_time = std::chrono::duration_cast<std::chrono::microseconds>(cpu_end - cpu_start);
+    auto gpu_time = std::chrono::duration_cast<std::chrono::microseconds>(gpu_end - gpu_start);
+
+    printf("CPU time: %lld ns\n", cpu_time.count());
+    printf("GPU time: %lld ns\n", gpu_time.count());
+
     // print the results
+    // the form of results was not specified
+    // so I just print them
+    // the print coud be redirected to a file 
     for (int i = 0; i < N; i++)
     {
         uint32_t* vec = vector(data, i);
@@ -433,10 +410,11 @@ int main()
         }
     }
 
-    t->delete_tree(t->root, 0);
-    cudaFree(memory);
-    cudaFree(results);
 Error:
+    cudaFree(memory);
+memoryError:
+    cudaFree(results);
+resultsError:
     cudaFree(data);
     return 0;
 }
