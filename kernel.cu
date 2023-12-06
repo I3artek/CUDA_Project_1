@@ -7,10 +7,14 @@
 #include <cstdint>
 #include <chrono>
 
-
+// length of one vector
 #define L 1000
+// number of 32-bit ints needed to store one vector
 #define L_32 ((L + 31) / 32)
+// number of vectors
 #define N 100000
+
+// some macro I created for generating semi-random vectors
 #define seed(n) (n * n + 7)
 
 
@@ -34,7 +38,7 @@
 #define flip_bit(vector, bit_no)  ((vector)[(bit_no) / 32] = FLIP_BIT((vector)[(bit_no) / 32], (bit_no) % 32))
 
 // returns pointer to n-th vector in data
-#define vector(data, n)         (&(data)[(n) * L_32])
+#define vector(data, n) (&(data)[(n) * L_32])
 
 
 void printVectorAsString(uint32_t* v)
@@ -244,6 +248,7 @@ void solve_on_cpu(uint32_t* data, uint32_t* results, struct node* memory)
 {
     for (int i = 0; i < N; i ++)
     {
+        printf("Solving %d\n", i);
         // here we look for solutions for i-th vector
 
         uint32_t* res = vector(results, i);
